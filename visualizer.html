@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Visualizer</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0b0e13;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header, footer {
+      padding: 10px;
+      text-align: center;
+    }
+    canvas {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #0b0e13;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      padding: 10px;
+    }
+    button, label {
+      background: #1f2937;
+      border: 1px solid #374151;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: white;
+    }
+    input[type="range"] {
+      width: 100px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Music Visualizer</h1>
+    <p>Upload audio or use microphone</p>
+  </header>
+
+  <div class="controls">
+    <label>
+      📂 Choose Audio
+      <input type="file" id="fileInput" accept="audio/*" hidden>
+    </label>
+    <button id="micBtn">🎙️ Use Mic</button>
+    <button id="playBtn">▶️ Play</button>
+    <button id="stopBtn">⏹ Stop</button>
+    <select id="mode">
+      <option value="bars">Bars</option>
+      <option value="wave">Wave</option>
+      <option value="radial">Radial</option>
+    </select>
+  </div>
+
+  <canvas id="visualizer"></canvas>
+
+  <footer>
+    Built with Web Audio API.
+  </footer>
+
+  <audio id="audio" hidden></audio>
+
+  <script>
+    const canvas = document.getElementById('visualizer');
+    const ctx2d = canvas.getContext('2d');
+    const audio = document.getElementById('audio');
+
+    const fileInput = document.getElementById('fileInput');
+    const micBtn = document.getElementById('micBtn');
+    const playBtn = document.getElementById('playBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const modeSelect = document.getElementById('mode');
+
+    let audioCtx, analyser, source;
+    let mode = 'bars';
+    let isPlaying = false;
+
+    const resizeCanvas = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight - 120;
+    };
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function createAudioCtx() {
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AC();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+      }
+    }
+
+    function connectSource(src) {
+      if (source) try { source.disconnect(); } catch {}
+      source = src;
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+    }
+
+    fileInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      createAudioCtx();
+      audio.src = URL.createObjectURL(file);
+      audio.play();
+      audioCtx.resume();
+      connectSource(audioCtx.createMediaElementSource(audio));
+      isPlaying = true;
+    });
+
+    micBtn.addEventListener('click', async () => {
+      try {
+        createAudioCtx();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        connectSource(audioCtx.createMediaStreamSource(stream));
+        audioCtx.resume();
+        isPlaying = true;
+      } catch (err) {
+        alert('Microphone access denied');
+      }
+    });
+
+    playBtn.addEventListener('click', () => {
+      if (!audio.src) return;
+      if (audio.paused) {
+        audio.play();
+        isPlaying = true;
+      } else {
+        audio.pause();
+        isPlaying = false;
+      }
+    });
+
+    stopBtn.addEventListener('click', () => {
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+        isPlaying = false;
+      }
+    });
+
+    modeSelect.addEventListener('change', e => mode = e.target.value);
+
+    function draw() {
+      requestAnimationFrame(draw);
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      ctx2d.fillStyle = '#0b0e13';
+      ctx2d.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (!analyser) return;
+
+      if (mode === 'bars' || mode === 'radial') {
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyser.getByteFrequencyData(dataArray);
+
+        if (mode === 'bars') {
+          const barWidth = (canvas.width / 64);
+          let x = 0;
+          for (let i = 0; i < 64; i++) {
+            const v = dataArray[i] / 255 * canvas.height;
+            ctx2d.fillStyle = 'lime';
+            ctx2d.fillRect(x, canvas.height - v, barWidth - 2, v);
+            x += barWidth;
+          }
+        } else {
+          const cx = canvas.width / 2;
+          const cy = canvas.height / 2;
+          const bins = 180;
+          ctx2d.save();
+          ctx2d.translate(cx, cy);
+          ctx2d.rotate(-Math.PI / 2);
+          for (let i = 0; i < bins; i++) {
+            const v = dataArray[i] / 255 * 150;
+            ctx2d.strokeStyle = 'cyan';
+            ctx2d.beginPath();
+            ctx2d.moveTo(50, 0);
+            ctx2d.lineTo(50 + v, 0);
+            ctx2d.stroke();
+            ctx2d.rotate((2 * Math.PI) / bins);
+          }
+          ctx2d.restore();
+        }
+      } else if (mode === 'wave') {
+        const bufferLength = analyser.fftSize;
+        const timeArray = new Uint8Array(bufferLength);
+        analyser.getByteTimeDomainData(timeArray);
+
+        ctx2d.beginPath();
+        ctx2d.strokeStyle = 'orange';
+        ctx2d.lineWidth = 2;
+
+        for (let i = 0; i < bufferLength; i++) {
+          const x = (i / bufferLength) * canvas.width;
+          const y = (timeArray[i] / 255) * canvas.height;
+          if (i === 0) ctx2d.moveTo(x, y);
+          else ctx2d.lineTo(x, y);
+        }
+        ctx2d.stroke();
+      }
+    }
+
+    draw();
+  </script>
+</body>
+</html>
